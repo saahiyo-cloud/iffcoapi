@@ -442,9 +442,7 @@ def query_vehicle():
             "details": result.get("details", result.get("raw", "")),
             "dev_info": {
                 "developer": "saahiyo-cloud",
-                "elapsed_time_seconds": elapsed_time,
-                "proxy_used": mask_proxy(proxy_used),
-                "execution_logs": logs
+                "elapsed_time_seconds": elapsed_time
             }
         }), 500
 
@@ -468,9 +466,7 @@ def query_vehicle():
     # Append dev_info node
     filtered_result["dev_info"] = {
         "developer": "saahiyo-cloud",
-        "elapsed_time_seconds": elapsed_time,
-        "proxy_used": mask_proxy(proxy_used),
-        "execution_logs": logs
+        "elapsed_time_seconds": elapsed_time
     }
     
     return jsonify(filtered_result)
