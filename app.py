@@ -155,8 +155,8 @@ def get_free_proxies():
             return list(PROXY_CACHE)
     
     try:
-        # Fetch HTTPS-capable, anonymous proxies with short timeouts from ProxyScrape
-        url = 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=anonymous'
+        # Fetch HTTPS-capable, anonymous proxies with short timeouts from ProxyScrape (strictly Indian proxies)
+        url = 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=IN&ssl=yes&anonymity=anonymous'
         r = requests.get(url, timeout=5)
         if r.status_code == 200:
             proxies = [line.strip() for line in r.text.split('\n') if line.strip()]
