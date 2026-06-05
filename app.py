@@ -406,22 +406,19 @@ def query_vehicle():
             "details": result.get("details", result.get("raw", ""))
         }), 500
 
-    # Filter out specific nodes requested by user
-    keys_to_remove = ["policyProfile", "redirect", "requestBreadcrum", "requestSource", "retrieveQuoteId", "userIPAddress"]
+    # Filter result to keep only essential vehicle information for OSINT tool
     if isinstance(result, dict):
-        for key in keys_to_remove:
-            result.pop(key, None)
-            
-        # Filter out empty/zero financial & premium fields from vehicle details
         vehicle_data = result.get("vehicle")
         if isinstance(vehicle_data, dict):
-            vehicle_keys_to_remove = [
-                "basePremium", "grossPremium", "grossPremiumAfterDiscount",
-                "premiumDiscount", "premiumPayble", "serviceTax", "totalPremium",
-                "longTermDiscount", "motorQuoteId"
-            ]
-            for key in vehicle_keys_to_remove:
-                vehicle_data.pop(key, None)
+            vehicle_keys_to_keep = {
+                "registrationNo", "chasisNo", "engineNo", "manufacturer", "model", "variant",
+                "fuelType", "seatingCapacity", "dateOfFirstRegistration", 
+                "monthAndYearOfRegistartion", "yearOfMake", "vehicleAge", "stateName", "cityName", 
+                "cityDisplayName", "policyNumber", "previousInsurer", "previousPolicyNo", 
+                "previousPolicyExpiryDate", "hypothecation"
+            }
+            cleaned_vehicle = {k: v for k, v in vehicle_data.items() if k in vehicle_keys_to_keep}
+            result = {"vehicle": cleaned_vehicle}
 
     # Filter out empty, None, and empty nested structures
     filtered_result = clean_empty_values(result)
