@@ -406,6 +406,12 @@ def query_vehicle():
             "details": result.get("details", result.get("raw", ""))
         }), 500
 
+    # Filter out specific nodes requested by user
+    keys_to_remove = ["policyProfile", "redirect", "requestBreadcrum", "requestSource", "retrieveQuoteId", "userIPAddress"]
+    if isinstance(result, dict):
+        for key in keys_to_remove:
+            result.pop(key, None)
+
     # Filter out empty, None, and empty nested structures
     filtered_result = clean_empty_values(result)
     return jsonify(filtered_result)
