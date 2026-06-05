@@ -262,26 +262,44 @@ def execute_vehicle_query_with_proxy(reg_no, mobile_no="8894659552", proxy=None,
     except Exception as e:
         return {"error": f"Error fetching populated vehicle context: {e}"}
 
+def mask_proxy(proxy_url):
+    if not proxy_url:
+        return "direct"
+    try:
+        parsed = urlparse(proxy_url)
+        host = parsed.netloc.split("@")[-1]
+        return f"{parsed.scheme}://{host}"
+    except Exception:
+        return "proxy"
+
 def execute_vehicle_query(reg_no, mobile_no="8894659552"):
     global LAST_WORKING_PROXY
     import random
+    logs = []
+    proxy_used = None
     
     # 1. Fast-path check: attempt lookup using the LAST_WORKING_PROXY first
     with proxy_lock:
         fast_proxy = LAST_WORKING_PROXY
         
     if fast_proxy:
+        masked_fast = mask_proxy(fast_proxy)
+        logs.append(f"Fast-path: attempting query via last working proxy {masked_fast}...")
         print(f"Fast-path check: attempting query via last working proxy {fast_proxy}...")
         result = execute_vehicle_query_with_proxy(reg_no, mobile_no, fast_proxy, timeout=5)
         if isinstance(result, dict) and "vehicle" in result:
             vehicle_data = result["vehicle"]
             if vehicle_data.get("fastLaneSuccess") and vehicle_data.get("chasisNo"):
+                logs.append(f"Fast-path success: resolved vehicle details (chassis: {vehicle_data.get('chasisNo')})")
                 print(f"  [Success] Fast-path proxy {fast_proxy} resolved full vehicle details (chassis: {vehicle_data.get('chasisNo')})")
-                return result
+                return result, logs, fast_proxy
             else:
+                logs.append("Fast-path warning: connected but chassis/engine was empty.")
                 print(f"  [Warning] Fast-path proxy {fast_proxy} connected but chassis/engine was empty.")
         else:
-            print(f"  [Failed] Fast-path proxy {fast_proxy} failed. Clearing last working proxy.")
+            err_msg = result.get('error', 'Unknown Error') if isinstance(result, dict) else str(result)
+            logs.append(f"Fast-path failed: {err_msg}. Clearing last working proxy.")
+            print(f"  [Failed] Fast-path proxy {fast_proxy} failed: {err_msg}. Clearing last working proxy.")
             with proxy_lock:
                 if LAST_WORKING_PROXY == fast_proxy:
                     LAST_WORKING_PROXY = None
@@ -289,8 +307,10 @@ def execute_vehicle_query(reg_no, mobile_no="8894659552"):
     # 2. Fallback to parallel execution
     proxy_list = get_free_proxies()
     if not proxy_list:
+        logs.append("Proxy list empty. Running direct query...")
         print("ProxyScrape list empty. Running direct query...")
-        return execute_vehicle_query_with_proxy(reg_no, mobile_no, proxy=None, timeout=5)
+        result = execute_vehicle_query_with_proxy(reg_no, mobile_no, proxy=None, timeout=5)
+        return result, logs, None
 
     # Filter out fast_proxy from the search if it already failed
     if fast_proxy and fast_proxy in proxy_list:
@@ -299,12 +319,16 @@ def execute_vehicle_query(reg_no, mobile_no="8894659552"):
     random.shuffle(proxy_list)
     candidates = proxy_list[:10]
     if not candidates:
+        logs.append("No other proxy candidates. Running direct query...")
         print("No other proxy candidates. Running direct query...")
-        return execute_vehicle_query_with_proxy(reg_no, mobile_no, proxy=None, timeout=5)
+        result = execute_vehicle_query_with_proxy(reg_no, mobile_no, proxy=None, timeout=5)
+        return result, logs, None
 
+    logs.append(f"Attempting query for {reg_no} in parallel across {len(candidates)} proxies.")
     print(f"Attempting query for {reg_no} in parallel across {len(candidates)} proxies...")
     
     best_fallback = None
+    best_fallback_proxy = None
     best_fallback_lock = threading.Lock()
     
     # We use ThreadPoolExecutor to run queries in parallel
@@ -317,36 +341,46 @@ def execute_vehicle_query(reg_no, mobile_no="8894659552"):
         # As soon as we get a response, process it
         for future in as_completed(future_to_proxy):
             proxy = future_to_proxy[future]
+            masked_p = mask_proxy(proxy)
             try:
                 result = future.result()
                 if isinstance(result, dict) and "vehicle" in result:
                     vehicle_data = result["vehicle"]
                     if vehicle_data.get("fastLaneSuccess") and vehicle_data.get("chasisNo"):
+                        logs.append(f"Proxy success: {masked_p} resolved vehicle details (chassis: {vehicle_data.get('chasisNo')})")
                         print(f"  [Success] Proxy {proxy} resolved full vehicle details (chassis: {vehicle_data.get('chasisNo')})")
                         with proxy_lock:
                             LAST_WORKING_PROXY = proxy
                         # Cancel remaining pending futures to save resources
                         executor.shutdown(wait=False, cancel_futures=True)
-                        return result
+                        return result, logs, proxy
                     else:
+                        logs.append(f"Proxy warning: {masked_p} connected, but lookup returned empty chassis/engine data.")
                         print(f"  [Warning] Proxy {proxy} connected, but Vahan lookup returned empty chassis/engine data.")
                         with best_fallback_lock:
                             if best_fallback is None:
                                 best_fallback = result
+                                best_fallback_proxy = proxy
                 else:
-                    print(f"  [Failed] Proxy {proxy} failed: {result.get('error', 'Unknown Error')}")
+                    err_msg = result.get('error', 'Unknown Error') if isinstance(result, dict) else str(result)
+                    logs.append(f"Proxy failed: {masked_p} - {err_msg}")
+                    print(f"  [Failed] Proxy {proxy} failed: {err_msg}")
             except Exception as exc:
+                logs.append(f"Proxy exception: {masked_p} - {exc}")
                 print(f"  [Error] Proxy {proxy} generated an exception: {exc}")
 
     # If any proxy returned a structured result (even if Vahan was empty/unsuccessful), return the best fallback
     with best_fallback_lock:
         if best_fallback:
+            logs.append(f"Returning best response from parallel proxy attempts via {mask_proxy(best_fallback_proxy)}")
             print("Returning the best response from parallel proxy attempts...")
-            return best_fallback
+            return best_fallback, logs, best_fallback_proxy
 
     # Fallback to direct connection if all proxies completely timed out / errored
+    logs.append("All proxies failed. Falling back to direct connection.")
     print("All proxies failed. Falling back to direct connection...")
-    return execute_vehicle_query_with_proxy(reg_no, mobile_no, proxy=None, timeout=5)
+    result = execute_vehicle_query_with_proxy(reg_no, mobile_no, proxy=None, timeout=5)
+    return result, logs, None
 
 def clean_empty_values(data):
     if isinstance(data, dict):
@@ -397,13 +431,21 @@ def query_vehicle():
             "message": "Missing required parameter 'reg_no'. Provide it in the query string or as a JSON body field."
         }), 400
 
-    result = execute_vehicle_query(reg_no, mobile_no)
+    start_time = time.time()
+    result, logs, proxy_used = execute_vehicle_query(reg_no, mobile_no)
+    elapsed_time = round(time.time() - start_time, 2)
     
     if isinstance(result, dict) and "error" in result:
         return jsonify({
             "status": "error",
             "message": result["error"],
-            "details": result.get("details", result.get("raw", ""))
+            "details": result.get("details", result.get("raw", "")),
+            "dev_info": {
+                "developer": "saahiyo-cloud",
+                "elapsed_time_seconds": elapsed_time,
+                "proxy_used": mask_proxy(proxy_used),
+                "execution_logs": logs
+            }
         }), 500
 
     # Filter result to keep only essential vehicle information for OSINT tool
@@ -422,6 +464,15 @@ def query_vehicle():
 
     # Filter out empty, None, and empty nested structures
     filtered_result = clean_empty_values(result)
+    
+    # Append dev_info node
+    filtered_result["dev_info"] = {
+        "developer": "saahiyo-cloud",
+        "elapsed_time_seconds": elapsed_time,
+        "proxy_used": mask_proxy(proxy_used),
+        "execution_logs": logs
+    }
+    
     return jsonify(filtered_result)
 
 if __name__ == '__main__':
