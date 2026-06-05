@@ -411,6 +411,17 @@ def query_vehicle():
     if isinstance(result, dict):
         for key in keys_to_remove:
             result.pop(key, None)
+            
+        # Filter out empty/zero financial & premium fields from vehicle details
+        vehicle_data = result.get("vehicle")
+        if isinstance(vehicle_data, dict):
+            vehicle_keys_to_remove = [
+                "basePremium", "grossPremium", "grossPremiumAfterDiscount",
+                "premiumDiscount", "premiumPayble", "serviceTax", "totalPremium",
+                "longTermDiscount", "motorQuoteId"
+            ]
+            for key in vehicle_keys_to_remove:
+                vehicle_data.pop(key, None)
 
     # Filter out empty, None, and empty nested structures
     filtered_result = clean_empty_values(result)
